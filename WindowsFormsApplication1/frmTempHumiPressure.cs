@@ -11,11 +11,16 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using EasyModbus;
 using System.Threading;
+using System.IO;
 
 namespace WindowsFormsApplication1
 {
     public partial class frmTempHumiPressure : Form
     {
+        // Khai báo biến Timer để lưu dữ liệu mỗi phút
+        private System.Windows.Forms.Timer saveDataTimer;
+
+        private readonly object logLock = new object();
         public frmTempHumiPressure()
         {
             InitializeComponent();
@@ -23,25 +28,67 @@ namespace WindowsFormsApplication1
             GetSettingPath();
         }
 
+        private void LogError(string message)
+        {
+            try
+            {
+                string folderPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Errors");
+                if (!Directory.Exists(folderPath))
+                {
+                    Directory.CreateDirectory(folderPath);
+                }
+
+                string filePath = Path.Combine(folderPath, "Er.txt");
+                string logEntry = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} - {message}{Environment.NewLine}";
+
+                lock (logLock)
+                {
+                    File.AppendAllText(filePath, logEntry);
+                }
+            }
+            catch
+            {
+                // Không làm gì nếu không thể ghi log
+            }
+        }
+
+
         private string ComPort = "";
         string intervalSend = "";
         public void GetSettingPath()
         {
             try
             {
-                var data = System.IO.File.ReadAllLines(AppDomain.CurrentDomain.BaseDirectory + "Setting\\Setting.txt");
+                string folderPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Setting");
+                string filePath = System.IO.Path.Combine(folderPath, "Setting.txt");
+
+                if (!System.IO.Directory.Exists(folderPath))
+                {
+                    throw new Exception("Thư mục cấu hình không tồn tại: " + folderPath);
+                }
+
+                if (!System.IO.File.Exists(filePath))
+                {
+                    throw new Exception("Không tìm thấy file cấu hình: " + filePath);
+                }
+
+                var data = System.IO.File.ReadAllLines(filePath);
                 if (data.Count() != 0)
                 {
                     ComPort = data[1];
                     intervalSend = data[2];
                 }
+                else
+                {
+                    throw new Exception("File cấu hình không chứa đủ thông tin.");
+                }
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Check Setting file!" + ex);
-                return;
+                MessageBox.Show("Lỗi khi đọc file cấu hình: " + ex.Message);
             }
         }
+
 
         private void frmTempHumiPressure_Load(object sender, EventArgs e)
         {
@@ -55,13 +102,123 @@ namespace WindowsFormsApplication1
 
             // StartModbusTask();
 
-            // Khởi tạo ModbusClient và kết nối
-            ModClient = new ModbusClient(ComPort);
-            ModClient.Baudrate = 9600;
-            ModClient.Parity = System.IO.Ports.Parity.None;
-            ModClient.Connect();  // Kết nối với thiết bị Modbus
+            // Kiểm tra sự tồn tại của cổng COM
+            /*if (!System.IO.Ports.SerialPort.GetPortNames().Contains(ComPort))
+            {
+                MessageBox.Show($"Cổng COM '{ComPort}' không tồn tại trên hệ thống!");
+                return;
+            }*/
 
-            StartUpdatingLabel();
+            try
+            {
+                if (!System.IO.Ports.SerialPort.GetPortNames().Contains(ComPort))
+                {
+                    MessageBox.Show($"Cổng COM '{ComPort}' không tồn tại trên hệ thống!");
+                    return;
+                }
+
+                // Khởi tạo ModbusClient và kết nối
+                ModClient = new ModbusClient(ComPort);
+                ModClient.Baudrate = 9600;
+                ModClient.Parity = System.IO.Ports.Parity.None;
+                ModClient.Connect();  // Kết nối với thiết bị Modbus            
+                StartUpdatingLabel();
+            }
+            catch (Exception ex)
+            {
+                LogError($"Lỗi kết nối Modbus: {ex.Message}");
+                MessageBox.Show($"Lỗi kết nối Modbus: {ex.Message}");
+            }
+            // Khởi tạo Timer để lưu dữ liệu mỗi phút
+            saveDataTimer = new System.Windows.Forms.Timer();
+            saveDataTimer.Interval = 60000; // 60000 milliseconds = 1 phút
+            saveDataTimer.Tick += SaveDataTimer_Tick; // Gắn sự kiện Tick
+            saveDataTimer.Start(); // Bắt đầu timer
+        }
+
+            private void SaveDataTimer_Tick(object sender, EventArgs e)
+            {
+            SaveDataToFile(); // Lưu dữ liệu vào file
+            }
+
+        private void SaveDataToFile()
+        {
+            try
+            {
+                string folderPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
+                if (!Directory.Exists(folderPath))
+                {
+                    Directory.CreateDirectory(folderPath);
+                }
+                string filePath = Path.Combine(folderPath, "SensorData.csv");
+
+                // Tạo file và ghi header nếu chưa tồn tại
+                if (!File.Exists(filePath))
+                {
+                    using (StreamWriter writer = new StreamWriter(filePath, false))
+                    {
+                        writer.WriteLine("Date,Time," +
+                            "Temperature1,Humidity1," +
+                            "Temperature2,Humidity2," +
+                            "Temperature3,Humidity3," +
+                            "Temperature4,Humidity4," +
+                            "Temperature5,Humidity5," +
+                            "Temperature6,Humidity6," +
+                            "Temperature7,Humidity7," +
+                            "Temperature8,Humidity8," +
+                            "Temperature9,Humidity9," +
+                            "Temperature10,Humidity10," +
+                            "Temperature11,Humidity11," +
+                            "Temperature12,Humidity12," +
+                            "Temperature13,Humidity13," +
+                            "Temperature14,Humidity14," +
+                            "Pressure13,Pressure14");
+                    }
+                }
+
+                // Lấy dữ liệu
+                string date = DateTime.Now.ToString("yyyy-MM-dd");
+                string time = DateTime.Now.ToString("HH:mm:ss");
+
+                var allValues = new List<string>
+        {
+            lbTemp1.Text, lbHumi1.Text,
+            lbTemp2.Text, lbHumi2.Text,
+            lbTemp3.Text, lbHumi3.Text,
+            lbTemp4.Text, lbHumi4.Text,
+            lbTemp5.Text, lbHumi5.Text,
+            lbTemp6.Text, lbHumi6.Text,
+            lbTemp7.Text, lbHumi7.Text,
+            lbTemp8.Text, lbHumi8.Text,
+            lbTemp9.Text, lbHumi9.Text,
+            lbTemp10.Text, lbHumi10.Text,
+            lbTemp11.Text, lbHumi11.Text,
+            lbTemp12.Text, lbHumi12.Text,
+            lbTemp13.Text, lbHumi13.Text,
+            lbTemp14.Text, lbHumi14.Text,
+            lbPreasure13.Text, lbPreasure14.Text
+        };
+
+                // Kiểm tra lỗi
+                if (allValues.Any(value => value == "Er"))
+                {
+                    LogError("Dữ liệu chứa lỗi, không lưu vào file CSV");
+                    return; // Dừng việc ghi file
+                }
+
+                // Ghi dữ liệu
+                string dataLine = $"{date},{time}," + string.Join(",", allValues);
+                using (StreamWriter writer = new StreamWriter(filePath, true))
+                {
+                    writer.WriteLine(dataLine);
+                }
+            }
+            catch (Exception ex)
+            {
+                // **LOG LỖI NẾU CÓ EXCEPTION**
+                LogError($"Lỗi lưu file CSV: {ex.Message}");
+                MessageBox.Show($"Lỗi: {ex.Message}");
+            }
         }
 
         private int counter = 0; // Đếm số giây đã trôi qua
@@ -72,8 +229,8 @@ namespace WindowsFormsApplication1
             {
                 // Cập nhật giá trị label sau mỗi giây
                 await Task.Delay(1000);  // Đợi 1 giây mà không làm treo UI thread
-                ModClient.UnitIdentifier = 1;
-                int[] temp1 = ModClient.ReadInputRegisters(0, 1);
+                ModClient.UnitIdentifier = 1; //Setting trạm số vs số tt =  1
+                int[] temp1 = ModClient.ReadInputRegisters(0, 1); 
                 int[] humi1 = ModClient.ReadInputRegisters(1, 1);
                 lbTemp1.Text = temp1[0].ToString().Substring(0, 2) + "." + temp1[0].ToString().Substring(2, 2); //Đọc nhiệt độ
                 lbHumi1.Text = humi1[0].ToString().Substring(0, 2) + "." + humi1[0].ToString().Substring(2, 2); //Đọc độ ẩm
@@ -181,7 +338,7 @@ namespace WindowsFormsApplication1
         private void StartThreads()
         {
             // Giả sử bạn đã tạo sẵn 10 label như myLabel1, myLabel2, ..., myLabel10
-            Label[] labelsArr = new Label[] { lbTemp1, lbTemp2, lbTemp3, lbTemp4, lbTemp5, lbTemp6, lbTemp7, lbTemp8, lbTemp9, lbTemp10, lbTemp11, lbTemp12, lbTemp13, lbTemp14, lbTemp15 };
+            Label[] labelsArr = new Label[] { lbTemp1, lbTemp2, lbTemp3, lbTemp4, lbTemp5, lbTemp6, lbTemp7, lbTemp8, lbTemp9, lbTemp10, lbTemp11, lbTemp12, lbTemp13, lbTemp14, /*lbTemp15*/};
 
             for (int i = 0; i < labelsArr.Count(); i++)
             {
@@ -198,7 +355,7 @@ namespace WindowsFormsApplication1
             try
             {
                 // Khởi tạo ModbusClient và kết nối
-                ModClient = new ModbusClient("COM2");
+                ModClient = new ModbusClient(ComPort);
                 ModClient.Baudrate = 9600;
                 ModClient.Parity = System.IO.Ports.Parity.None;
                 ModClient.Connect();  // Kết nối với thiết bị Modbus
@@ -216,6 +373,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 1: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp1.Text = "Er";
@@ -232,6 +390,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 2: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp2.Text = "Er";
@@ -248,10 +407,11 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 3: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp3.Text = "Er";
-                        })); ;
+                        }));
                     }
 
                     //lbSensor1
@@ -264,6 +424,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 4: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp4.Text = "Er";
@@ -280,6 +441,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 5: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp5.Text = "Er";
@@ -296,6 +458,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 6: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp6.Text = "Er";
@@ -312,6 +475,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 7: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp7.Text = "Er";
@@ -328,6 +492,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 8: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp8.Text = "Er";
@@ -344,6 +509,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 9: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp9.Text = "Er";
@@ -360,6 +526,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 10: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp10.Text = "Er";
@@ -376,6 +543,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 11: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp11.Text = "Er";
@@ -392,6 +560,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 12: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp12.Text = "Er";
@@ -408,6 +577,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 13: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp13.Text = "Er";
@@ -424,6 +594,7 @@ namespace WindowsFormsApplication1
                     }
                     catch (Exception ex)
                     {
+                        LogError($"Lỗi đọc cảm biến Unit 14: {ex.Message}");
                         this.Invoke(new Action(() =>
                         {
                             lbTemp14.Text = "Er";
@@ -431,7 +602,7 @@ namespace WindowsFormsApplication1
                     }
 
                     //lbSensor1
-                    try
+                   /* try
                     {
                         ModClient.UnitIdentifier = 15;
                         int[] vals = ModClient.ReadHoldingRegisters(1, 1);
@@ -444,7 +615,7 @@ namespace WindowsFormsApplication1
                         {
                             lbTemp15.Text = "Er";
                         })); ;
-                    }
+                    }*/
 
                     //lbSensor1
                     try
@@ -478,7 +649,7 @@ namespace WindowsFormsApplication1
             try
             {
                 // Khởi tạo ModbusClient và kết nối
-                ModClient = new ModbusClient("COM2");
+                ModClient = new ModbusClient(ComPort);
                 ModClient.Baudrate = 9600;
                 ModClient.Parity = System.IO.Ports.Parity.None;
                 ModClient.Connect();  // Kết nối với thiết bị Modbus
@@ -539,7 +710,7 @@ namespace WindowsFormsApplication1
             try
             {
                 // Khởi tạo ModbusClient và kết nối
-                ModClient = new ModbusClient("COM2");
+                ModClient = new ModbusClient(ComPort);
                 ModClient.Baudrate = 9600;
                 ModClient.Parity = System.IO.Ports.Parity.None;
                 ModClient.Connect();  // Kết nối với thiết bị Modbus
@@ -782,7 +953,7 @@ namespace WindowsFormsApplication1
                     case 12: lbTemp12.Text = value; break;
                     case 13: lbTemp13.Text = value; break;
                     case 14: lbTemp14.Text = value; break;
-                    case 15: lbTemp15.Text = value; break;
+                   // case 15: lbTemp15.Text = value; break;
                     default: break;
                 }
             }));
@@ -792,5 +963,6 @@ namespace WindowsFormsApplication1
         {
 
         }
+
     }
 }

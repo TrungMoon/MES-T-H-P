@@ -144,7 +144,7 @@
             this.label4.Name = "label4";
             this.label4.Size = new System.Drawing.Size(43, 13);
             this.label4.TabIndex = 4;
-            this.label4.Text = "Status :";
+            this.label4.Text = "STATUS :";
             // 
             // lblStatus
             // 
